@@ -13,7 +13,6 @@
 #define USE_CUDA true
 
 
-
 #ifndef USE_OPENCV3
 
 
@@ -26,8 +25,7 @@
 #include <opencv2/stitching/stitcher.hpp>
 #include <opencv2/opencv.hpp>
 //GPU stuff
-#include <opencv2/gpu/gpu.hpp>
-#include <opencv2/gpu/gpumat.hpp>
+#include <opencv2/core/cuda.hpp>
 
 #ifdef USE_CUDA
     #define MAT_TYPE cuda::GpuMat
@@ -38,6 +36,7 @@
 #endif
 
 #else
+
 
 using namespace std;
 
@@ -51,11 +50,9 @@ using namespace std;
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgcodecs.hpp>
-//#include <opencv2/tracking.hpp>
-//#include <opencv2/tracking/tracker.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/core/ocl.hpp>
-#include <opencv2/gpu/gpu.hpp>
+#include <opencv2/core/cuda.hpp>
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudafilters.hpp>
@@ -94,17 +91,17 @@ using namespace cv;
 
 // buffers and semaphores
 struct srcBuffer {
-    MAT_TYPE warped_image;
-    MAT_TYPE warped_mask;
-    Point corner;
-    Size size;
-    MAT_TYPE full_warped_image;
+    MAT_TYPE image;
 };
 
 #define BUFF_SIZE 2
 
-#define IM_WIDTH 2048
-#define IM_HEIGHT 1536
+
+// Mako camera settings:
+// Width = 2064
+// Height = 1544
+// 12 bits
+
 
 #define IDENTIFY_TIMEOUT 10
 
@@ -140,10 +137,6 @@ enum experimentType {
 };
 
 
-struct circlesLocalTrackerData {
-    // mappings from the image indices to the quadrants
-    int inds[4];
-};
 
 // DRAWABLES:
 
@@ -168,27 +161,27 @@ class acquireThread;
 class KilobotExperiment;
 
 /*!
- * \brief The KilobotTracker class
+ * \brief The kilobottracker_singlecamera class
  *
  * This class contains the code that tracks Kilobots in the live camera or offline video feeds.
  *
  */
-class KilobotTracker : public QObject
+class kilobottracker_singlecamera : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit KilobotTracker(QPoint smallImageSize = QPoint(300,300), QObject *parent = 0);
-    ~KilobotTracker();
+    explicit kilobottracker_singlecamera(QPoint smallImageSize = QPoint(300,300), QObject *parent = 0);
+    ~kilobottracker_singlecamera();
 
     KilobotExperiment * expt;
 
     //Default tracking parameters and identification parameters
-    int kbMinSize = 12;
-    int kbMaxSize = 22;
+    int kbMinSize = 30; //12;
+    int kbMaxSize = 35; //22;
     int houghAcc = 12;
-    int cannyThresh = 50;
-    int maxIDtoCheck = 100;
+    int cannyThresh = 100; //50;
+    int maxIDtoCheck = 10;
     uint manualID;
     // camera parameters
     int height_x_adj = 10;
@@ -249,11 +242,8 @@ public slots:
      */
     void identifyKilobots();
 
-    /*!
-     * \brief setCamOrder
-     * If the camera order does not match the calibration order, alter
-     */
-    void SETUPsetCamOrder();
+
+
 
     // drawing slots
     void drawCircle(QPointF pos, float r, QColor col, int thickness = 2, std::string text ="", bool transparent = false) {
@@ -298,8 +288,8 @@ public slots:
     }
 
     void saveVideoFrames(QString file, unsigned int numofframes) {
-            savecamerasframes = true;
-            savecamerasframesdir=file;
+            savecameraframe = true;
+            savecameraframedir=file;
             numberofframes=numofframes;
     }
 
@@ -433,18 +423,18 @@ private:
     cuda::GpuMat finalImageB;
     cuda::GpuMat finalImageG;
     cuda::GpuMat finalImageR;
-    cuda::GpuMat fullImages[4][3];
+    cuda::GpuMat fullImages[3];
     // make thread safe
     cuda::Stream stream;
 #else
     Mat finalImage;
-    Mat fullImages[4][3];
+    Mat fullImages[3];
 #endif
 
-    vector < MAT_TYPE > warpedImages;
-    vector < MAT_TYPE > warpedMasks;
-    vector < Point > corners;
-    vector < Size > sizes;
+    MAT_TYPE warpedImages;
+    MAT_TYPE warpedMasks;
+    Point corners;
+    Size sizes;
 
     vector < Mat > Ks;
     vector < Mat > Rs;
@@ -452,7 +442,7 @@ private:
     bool haveCalibration = false;
     QTimer tick;
 
-    acquireThread * threads[4] = {NULL,NULL,NULL,NULL};
+    acquireThread * threads = NULL;
 
     int time = 0;
     /*!
@@ -482,8 +472,6 @@ private:
     QVector < QVector < int > > exclusionTestsIndices;
 
     float last_time = 0.0f;
-
-    circlesLocalTrackerData clData;
 
     Size fullSize;
     Point fullCorner;
@@ -528,9 +516,9 @@ private:
     QElapsedTimer runtimeIDtimer;
 
     //video saving
-    bool savecamerasframes=false;
+    bool savecameraframe=false;
     unsigned int numberofframes;
-    QString savecamerasframesdir;
+    QString savecameraframedir;
 
 
 };

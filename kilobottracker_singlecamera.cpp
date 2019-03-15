@@ -1,11 +1,11 @@
 /*!
- * Kilobottracker.cpp
+ * kilobottracker_singlecamera.cpp
  *
- *  Created on: 3 Oct 2016
- *  Author: Alex Cope
+ *  Created on: 22 Feb 2019
+ *  Author: Vander Freitas
  */
 
-#include "kilobottracker.h"
+#include "kilobottracker_singlecamera.h"
 #include "kilobotexperiment.h"
 #include <QImage>
 #include <QThread>
@@ -20,13 +20,19 @@
 //#define TESTLEDS
 #define COLDET_V1
 
-QSemaphore srcFree[4];
-QSemaphore srcUsed[4];
-srcBuffer srcBuff[4][BUFF_SIZE];
-QSemaphore srcStop[4];
+
+#define IMG_WIDTH 640
+#define IMG_HEIGHT 480
+
+QSemaphore srcFree;
+QSemaphore srcUsed;
+srcBuffer srcBuff[BUFF_SIZE];
+QSemaphore srcStop;
 QSemaphore camUsage;
 
-int camOrder[4] = {0,1,2,3};
+
+
+
 
 /*!
  * \brief The acquireThread class
@@ -68,13 +74,13 @@ public:
     cv::VideoCapture cap;
 
     //video saving
-    bool savecamerasframes=false;
+    bool savecameraframe=false;
     QString videoframeprefix;
 
 private:
     /*!
      * \brief run
-     * The execution method for the thread, performing the stitching process
+     * The execution method for the thread
      */
     void run() {
 
@@ -93,28 +99,15 @@ private:
 
         uint time = 0;
         Mat image;
-        Mat mask;
-
-        Ptr<WarperCreator> warper_creator;
-        warper_creator = new cv::PlaneWarper();//makePtr<cv::PlaneWarper>();
-        Ptr<detail::RotationWarper> warper = warper_creator->create(2000.0f);
-
-        Point2f outputQuad[4];
-        outputQuad[0] = Point(0,0);
-        outputQuad[1] = Point(2000,0);
-        outputQuad[2] = Point(0,2000);
-        outputQuad[3] = Point(2000,2000);
 
         // loop
         while (keepRunning) {
-
             // check for stop signal
-            if (srcStop[index].available()) {
+            if (srcStop.available()) {
                 keepRunning = false;
             }
 
-            if (srcFree[index].available()) {
-
+            if (srcFree.available()) {
                 // get data
                 if (type == IMAGES) {
                     // NOTE: need to decide on format for imagevideos
@@ -125,13 +118,13 @@ private:
 
                     // Open the camera
                     camUsage.acquire();
-                    if (!cap.isOpened() && camOrder[index]<4) {
-                        cap.open(camOrder[index]);
+                    if (!cap.isOpened()) {
+                        cap.open(0);
                         // set REZ
                         if (cap.isOpened()) {
                             cap.set(CV_CAP_PROP_FOURCC, CV_FOURCC('M','J','P','G'));
-                            cap.set(CV_CAP_PROP_FRAME_WIDTH, IM_WIDTH);
-                            cap.set(CV_CAP_PROP_FRAME_HEIGHT, IM_HEIGHT);
+                            cap.set(CV_CAP_PROP_FRAME_WIDTH, IMG_WIDTH);
+                            cap.set(CV_CAP_PROP_FRAME_HEIGHT, IMG_HEIGHT);
                         } else {
                             this->keepRunning = false;
                             continue;
@@ -146,86 +139,51 @@ private:
 
                         camUsage.acquire();
                         cap.retrieve(image);
-                        if(savecamerasframes) {
-                            vector<int> compression_params;
-                            compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
-                            compression_params.push_back(95);
-                            imwrite(videoframeprefix.toStdString(), image, compression_params);
-                            savecamerasframes=false;
+
+                        //This rect must be changed whenever the camera changes position.
+                        //This captures exactly the center of the scene, in order to have only the arena region.
+                        //The output image has dimensions 1400 x 1400 pixels.
+
+                        //image = image(Rect(370,70,1400,1400));
+
+                        // One has to check whether it is necessary for the image to have Size 2000 x 2000 pixels.
+                        // We kept only because the original ARK code prescribes this size.
+                        cv::resize(image, image, cv::Size(2000,2000), 0, 0, cv::INTER_CUBIC);
+
+
+
+                        if(savecameraframe) {
+                            savecameraframe=false;
                         }
+
+
                         camUsage.release();
                     }
                     else
 #endif
                     {
-                        image = Mat(IM_HEIGHT,IM_WIDTH, CV_8UC3, Scalar(0,0,0)); /* TEMPORARY!!! */
+                        image = Mat(2000,2000, CV_8UC3, Scalar(0,0,0)); // TEMPORARY!!!
                         camUsage.release();
                     }
 
                 } else if (type == VIDEO) {
-                    qDebug() << (this->videoDir+QDir::toNativeSeparators("/")+QString("frame_%1_%2").arg(/*time+*/time, 5,10, QChar('0')).arg(index)+QString(".jpg"));
-                    image = imread((this->videoDir+QDir::toNativeSeparators("/")+QString("frame_%1_%2").arg(/*time+*/time, 5,10, QChar('0')).arg(index)+QString(".jpg")).toStdString());
+                    qDebug() << "video dir: " << (this->videoDir+QDir::toNativeSeparators("/")+QString("frame_%1_%2").arg(time, 5,10, QChar('0')).arg(index)+QString(".jpg"));
+                    image = imread((this->videoDir+QDir::toNativeSeparators("/")+QString("frame_%1_%2").arg(time, 5,10, QChar('0')).arg(index)+QString(".jpg")).toStdString());
                     if (image.empty()) {qDebug() << "Image not found"; continue;}
                 }
 
-                // Prepare images masks
-                if (mask.size().width < 10) {
-                    mask.create(image.size(), CV_8U);
-                }
-                mask.setTo(Scalar::all(255));
-
                 // check semaphore
-                srcFree[index].acquire();
+                srcFree.acquire();
+
+
 
 #ifdef USE_CUDA
-                Mat tempCuda;
-                srcBuff[index][time % BUFF_SIZE].corner = warper->warp(image, K, R, INTER_LINEAR, BORDER_REFLECT, tempCuda);
-                srcBuff[index][time % BUFF_SIZE].warped_image.upload(tempCuda);
-                srcBuff[index][time % BUFF_SIZE].size = srcBuff[index][time % BUFF_SIZE].warped_image.size();
-                warper->warp(mask, K, R, INTER_NEAREST, BORDER_CONSTANT, tempCuda);
-                srcBuff[index][time % BUFF_SIZE].warped_mask.upload(tempCuda);
+                srcBuff[time % BUFF_SIZE].image.upload(image); // = cuda::GpuMat(image);
 #else
-                srcBuff[index][time % BUFF_SIZE].corner = warper->warp(image, K, R, INTER_LINEAR, BORDER_REFLECT, srcBuff[index][time % BUFF_SIZE].warped_image);
-                srcBuff[index][time % BUFF_SIZE].size = srcBuff[index][time % BUFF_SIZE].warped_image.size();
-                warper->warp(mask, K, R, INTER_NEAREST, BORDER_CONSTANT, srcBuff[index][time % BUFF_SIZE].warped_mask);
+                image.copyTo(srcBuff[time % BUFF_SIZE].image);
 #endif
 
-                // only do this if we are not loading calibration
-                if (!(this->corner.x == -1 && this->corner.y == -1)) {
-
-                    // adjustment used to compensate for placing calibration images on table, and not at kilobot height
-                    MAT_TYPE temp;
-#ifdef USE_CUDA
-//                    qDebug() << "Size w: " << size.width << " h: " << size.height;
-//                    qDebug() << "Full-Size w: " << fullSize.width << " h: " << fullSize.height;
-//                    cv::cuda::resize(srcBuff[index][time % BUFF_SIZE].warped_image, temp, Size(size.width-height_adj,size.height-height_adj),0,0, INTER_LINEAR, stream);
-//                    cv::cuda::resize(temp, temp2,Size((2048*(size.width-height_adj))/fullSize.width,(1536*(size.height-height_adj))/fullSize.height),0,0, INTER_LINEAR, stream);
-                    cv::cuda::resize(srcBuff[index][time % BUFF_SIZE].warped_image, temp, Size((min(IM_HEIGHT,IM_WIDTH)*(size.width-height_x_adj))/fullSize.width,(min(IM_HEIGHT,IM_WIDTH)*(size.height-height_y_adj))/fullSize.height),0,0, INTER_LINEAR, stream);
-#else
-                    cv::resize(srcBuff[index][time % BUFF_SIZE].warped_image, temp,Size((min(IM_HEIGHT,IM_WIDTH)*(size.width-height_x_adj))/fullSize.width,(min(IM_HEIGHT,IM_WIDTH)*(size.height-height_y_adj))/fullSize.height));
-#endif
-
-                    Point2f arenaCorners_adj[4];
-                    Point2f outputQuad_adj[4];
-//                    qDebug() << "Thread " << this->index << " corner " << corner.x << "," << corner.y << " full Corner " << fullCorner.x << "," << fullCorner.y;
-                    for (int i = 0; i < 4; ++i) {
-                        arenaCorners_adj[i] = arenaCorners[i] - Point2f(((corner.x-fullCorner.x)*min(IM_HEIGHT,IM_WIDTH))/fullSize.width,((corner.y-fullCorner.y)*min(IM_HEIGHT,IM_WIDTH))/fullSize.height);
-//                        qDebug() << "arenaCorners_adj " << i << " is " << arenaCorners_adj[i].x << "," << arenaCorners_adj[i].y;
-                        // shift the location for all but the first camera, and add 100 pixel overlap around the images
-                        outputQuad_adj[i] = outputQuad[i] - Point2f((fabs(corner.x-fullCorner.x)>100)*1000-100, (fabs(corner.y-fullCorner.y)>100)*1000-100);
-                    }
-
-                    Mat M = getPerspectiveTransform(arenaCorners_adj,outputQuad_adj);
-                    // 1200 x 1200 output includes 100 pixel overlap aound entire image
-#ifdef USE_CUDA
-                    cuda::warpPerspective(temp, srcBuff[index][time % BUFF_SIZE].full_warped_image, M, Size(1200,1200),INTER_LINEAR,BORDER_CONSTANT,Scalar(),stream);
-#else
-                    warpPerspective(temp, srcBuff[index][time % BUFF_SIZE].full_warped_image, M, Size(1200,1200));
-#endif
-
-                }
-
-                srcUsed[index].release();
+                srcUsed.release();
 
                 ++time;
             }
@@ -235,16 +193,16 @@ private:
 
     }
 };
-KilobotTracker::KilobotTracker(QPoint smallImageSize, QObject *parent) : QObject(parent)
+kilobottracker_singlecamera::kilobottracker_singlecamera(QPoint smallImageSize, QObject *parent) : QObject(parent)
 {
     // select cuda device
 #ifdef USE_CUDA
-    //qDebug() << "There are" << cuda::getCudaEnabledDeviceCount() << "CUDA devices";
-    try {
-        cuda::setDevice(cuda::getCudaEnabledDeviceCount()-2);
-    } catch (cv::Exception){
-        cuda::setDevice(cuda::getCudaEnabledDeviceCount()-1);
-    }
+    qDebug() << "There are" << cuda::getCudaEnabledDeviceCount() << "CUDA devices";
+    //try {
+    //    cuda::setDevice(cuda::getCudaEnabledDeviceCount()-2);
+    //} catch (cv::Exception){
+    //    cuda::setDevice(cuda::getCudaEnabledDeviceCount()-1);
+    //}
     qDebug() << "Using CUDA device " << cuda::DeviceInfo().name();
 
 #endif
@@ -254,28 +212,24 @@ KilobotTracker::KilobotTracker(QPoint smallImageSize, QObject *parent) : QObject
     connect(&this->tick, SIGNAL(timeout()), this, SLOT(LOOPiterate()));
 
     // initialise semaphores
-    srcFree[0].release(BUFF_SIZE);
-    srcFree[1].release(BUFF_SIZE);
-    srcFree[2].release(BUFF_SIZE);
-    srcFree[3].release(BUFF_SIZE);
+    srcFree.release(BUFF_SIZE);
 
     camUsage.release(1);
 
 }
-KilobotTracker::~KilobotTracker()
+kilobottracker_singlecamera::~kilobottracker_singlecamera()
 {
-    if (this->threads[0] && this->threads[0]->isRunning()) {
+    if (this->threads && this->threads->isRunning()) {
         this->THREADSstop();
     }
 
     // clean up memory
-    for (uint i = 0; i < 4; ++i) {
-        if (this->threads[i]) {
-            delete this->threads[i];
-        }
+    if (this->threads) {
+        delete this->threads;
     }
+
 }
-void KilobotTracker::LOOPstartstop(int expType)
+void kilobottracker_singlecamera::LOOPstartstop(int expType)
 {
 
     this->expType = (experimentType) expType;
@@ -283,7 +237,7 @@ void KilobotTracker::LOOPstartstop(int expType)
     emit toggleExpButton((int)expType);
 
     // check if running
-    if (this->threads[0] && this->threads[0]->isRunning()) {
+    if (this->threads && this->threads->isRunning()) {
         // reset IDing
         //this->aStage = START;
         currentID = 0;
@@ -312,7 +266,7 @@ void KilobotTracker::LOOPstartstop(int expType)
         data[i*2+1] = kilos[i]->getPosition().y();
     }
     kbLocs.upload(tempKbLocs);
-    
+
     //     this->hough = cuda::createHoughCirclesDetector(1.0,1.0,this->cannyThresh,this->houghAcc,this->kbMinSize,this->kbMaxSize,5000); // kilobot detection
     //this->hough = cuda::createHoughCirclesDetector(1.0,this->kbMinSize/1.4,this->cannyThresh,this->houghAcc,this->kbMinSize,this->kbMaxSize,3000); // kilobot detection
     this->hough = cuda::createHoughCirclesDetector(1.0,1.0,this->cannyThresh,this->houghAcc,this->kbMinSize,this->kbMaxSize,20000); // kilobot detection
@@ -358,10 +312,10 @@ void KilobotTracker::LOOPstartstop(int expType)
         blender = detail::Blender::createDefault(detail::Blender::FEATHER, true);
     }
 
-    this->warpedImages.resize(4);
-    this->warpedMasks.resize(4);
-    this->corners.resize(4);
-    this->sizes.resize(4);
+    //this->warpedImages.resize(4);
+    //this->warpedMasks.resize(4);
+    //this->corners.resize(4);
+    //this->sizes.resize(4);
 
     currentID = 0;
 
@@ -379,29 +333,22 @@ void KilobotTracker::LOOPstartstop(int expType)
     this->m_runtimeIdentificationTimer = 0;
 
 }
-void KilobotTracker::LOOPiterate()
+void kilobottracker_singlecamera::LOOPiterate()
 {
 
-    if(savecamerasframes && (time <= numberofframes)){
+    if(savecameraframe && (time <= numberofframes)){
 
-        if(!(this->threads[0]->savecamerasframes) &&
-           !(this->threads[1]->savecamerasframes) &&
-           !(this->threads[2]->savecamerasframes) &&
-           !(this->threads[3]->savecamerasframes)){
-        for (uint i = 0; i < 4; ++i)
-        {
-            this->threads[i]->savecamerasframes = true;
-            this->threads[i]->videoframeprefix=savecamerasframesdir+QString("/")+QString("frame_%1_%2").arg(/*time+*/time-1, 5,10, QChar('0')).arg(i)+QString(".jpg"); 
+        if(!(this->threads->savecameraframe)){
+
+            this->threads->savecameraframe = true;
+            this->threads->videoframeprefix=savecameraframedir+QString("/")+QString("frame_%1_%2").arg(/*time+*/time-1, 5,10, QChar('0')).arg(0)+QString(".jpg");
+
         }
-    }
         else return;
-   }
-    else savecamerasframes=false;
+    }
+    else savecameraframe=false;
     // wait for semaphores
-    if ((srcUsed[0].available() > 0 && \
-         srcUsed[1].available() > 0 && \
-         srcUsed[2].available() > 0 && \
-         srcUsed[3].available() > 0) || this->loadFirstIm)
+    if ((srcUsed.available() > 0) || this->loadFirstIm)
     {
 
         // we have tracking, so it is safe to start the experiment
@@ -411,95 +358,55 @@ void KilobotTracker::LOOPiterate()
             }
         }
 
-        srcUsed[0].acquire();
-        srcUsed[1].acquire();
-        srcUsed[2].acquire();
-        srcUsed[3].acquire();
-
-        // process images into single image
-        for (uint i = 0; i < 4; ++i) {
-            this->warpedImages[i] = srcBuff[i][time % BUFF_SIZE].warped_image;
-            this->warpedMasks[i] = srcBuff[i][time % BUFF_SIZE].warped_mask;
-            this->corners[i] = srcBuff[i][time % BUFF_SIZE].corner;
-            this->sizes[i] = srcBuff[i][time % BUFF_SIZE].size;
-        }
-
-
-        // feed with first frame
-#ifndef USE_CUDA
-        if (time == 0) {
-            compensator->feed(corners, warpedImages, warpedMasks);
-        }
-
-        // apply compensation
-        for (int i = 0; i < 4; ++i) {
-            compensator->apply(i, corners[i], srcBuff[i][time % BUFF_SIZE].full_warped_image, warpedMasks[i]);
-        }
-#endif
+        srcUsed.acquire();
 
 #ifdef USE_CUDA
-        cuda::GpuMat channels[4][3];
+        cuda::GpuMat channels[3];
 #else
-        Mat channels[4][3];
+        Mat channels[3];
 #endif
 
-        Mat saveIm[4];
+        Mat saveIm;
 
         // move full images from threads
-        for (uint i = 0; i < 4; ++i) {
 
 #ifdef USE_CUDA
-            cuda::GpuMat temp;
+        cuda::GpuMat temp;
 #else
-            Mat temp;
+        Mat temp;
 #endif
-            srcBuff[i][time % BUFF_SIZE].full_warped_image.copyTo(temp);
-            CV_NS split(temp, channels[i]);
+        srcBuff[time % BUFF_SIZE].image.copyTo(temp);
+        CV_NS split(temp, channels);
 #ifdef USE_CUDA
-            temp.download(saveIm[i]);
+        temp.download(saveIm);
 #else
-            saveIm[i] = temp;
+        saveIm = temp;
 #endif
-            this->fullImages[i][0] = channels[i][0];
-            this->fullImages[i][1] = channels[i][1];
-            this->fullImages[i][2] = channels[i][2];
+        this->fullImages[0] = channels[0];
+        this->fullImages[1] = channels[1];
+        this->fullImages[2] = channels[2];
 
-        }
 
-        Mat top;
-        Mat bottom;
 #ifdef USE_CUDA
-        cv::cuda::GpuMat resultB(2000, 2000, this->fullImages[clData.inds[0]][0].type());
-        this->fullImages[clData.inds[0]][0](Rect(100,100,1000,1000)).copyTo(resultB(cv::Rect(0,0,1000,1000)));
-        this->fullImages[clData.inds[1]][0](Rect(100,100,1000,1000)).copyTo(resultB(cv::Rect(1000,0,1000,1000)));
-        this->fullImages[clData.inds[2]][0](Rect(100,100,1000,1000)).copyTo(resultB(cv::Rect(0,1000,1000,1000)));
-        this->fullImages[clData.inds[3]][0](Rect(100,100,1000,1000)).copyTo(resultB(cv::Rect(1000,1000,1000,1000)));
-        cv::cuda::GpuMat resultG(2000, 2000, this->fullImages[clData.inds[0]][0].type());
-        this->fullImages[clData.inds[0]][1](Rect(100,100,1000,1000)).copyTo(resultG(cv::Rect(0,0,1000,1000)));
-        this->fullImages[clData.inds[1]][1](Rect(100,100,1000,1000)).copyTo(resultG(cv::Rect(1000,0,1000,1000)));
-        this->fullImages[clData.inds[2]][1](Rect(100,100,1000,1000)).copyTo(resultG(cv::Rect(0,1000,1000,1000)));
-        this->fullImages[clData.inds[3]][1](Rect(100,100,1000,1000)).copyTo(resultG(cv::Rect(1000,1000,1000,1000)));
-        cv::cuda::GpuMat resultR(2000, 2000, this->fullImages[clData.inds[0]][0].type());
-        this->fullImages[clData.inds[0]][2](Rect(100,100,1000,1000)).copyTo(resultR(cv::Rect(0,0,1000,1000)));
-        this->fullImages[clData.inds[1]][2](Rect(100,100,1000,1000)).copyTo(resultR(cv::Rect(1000,0,1000,1000)));
-        this->fullImages[clData.inds[2]][2](Rect(100,100,1000,1000)).copyTo(resultR(cv::Rect(0,1000,1000,1000)));
-        this->fullImages[clData.inds[3]][2](Rect(100,100,1000,1000)).copyTo(resultR(cv::Rect(1000,1000,1000,1000)));
+        cv::cuda::GpuMat resultB(2000, 2000, this->fullImages[0].type());
+        //cv::cuda::resize(this->fullImages[0], this->fullImages[0], cv::Size(2000, 2000), 0,0, cv::INTER_CUBIC);
+        this->fullImages[0].copyTo(resultB);
+
+        cv::cuda::GpuMat resultG(2000, 2000, this->fullImages[0].type());
+        //cv::cuda::resize(this->fullImages[1], this->fullImages[1], cv::Size(2000, 2000), 0,0, cv::INTER_CUBIC);
+        this->fullImages[1].copyTo(resultG);
+
+        cv::cuda::GpuMat resultR(2000, 2000, this->fullImages[0].type());
+        //cv::cuda::resize(this->fullImages[2], this->fullImages[2], cv::Size(2000, 2000), 0,0, cv::INTER_CUBIC);
+        this->fullImages[2].copyTo(resultR);
+        
 #else
         Mat result;
-        hconcat(this->fullImages[clData.inds[0]][0](Rect(100,100,1000,1000)),this->fullImages[clData.inds[1]][0](Rect(100,100,1000,1000)),top);
-        hconcat(this->fullImages[clData.inds[2]][0](Rect(100,100,1000,1000)),this->fullImages[clData.inds[3]][0](Rect(100,100,1000,1000)),bottom);
-        vconcat(top,bottom,result);
+        this->fullImages[0].copyTo(result);
 #endif
+        saveIm.copyTo(this->finalImageCol);
 
-        hconcat(saveIm[clData.inds[0]](Rect(100,100,1000,1000)),saveIm[clData.inds[1]](Rect(100,100,1000,1000)),top);
-        hconcat(saveIm[clData.inds[2]](Rect(100,100,1000,1000)),saveIm[clData.inds[3]](Rect(100,100,1000,1000)),bottom);
-        vconcat(top,bottom,this->finalImageCol);
-
-
-        srcFree[0].release();
-        srcFree[1].release();
-        srcFree[2].release();
-        srcFree[3].release();
+        srcFree.release();
 
         if (flipangle!=0) {
             cv::Point origin(this->finalImageB.cols/2,this->finalImageB.rows/2);
@@ -516,40 +423,40 @@ void KilobotTracker::LOOPiterate()
         }
 
         switch (this->expType) {
-        case USER_EXP:{
-            this->trackKilobots();
+	        case USER_EXP:{
+	            this->trackKilobots();
 
-            /** determine if executing the runtime-identification (RTI) */
-            if (this->m_runtimeIDenabled){
-                bool runRTI = false;
-                if (this->m_ongoingRuntimeIdentification){ // if already running, keep running
-                    runRTI = true;
-                } else if (!this->pendingRuntimeIdentification.empty() && this->m_runtimeIdentificationTimer++ > 50){ // if there are pending request for more than 5s
-                    // I check that all pending request are not lost robots
-                    bool anyLost = false;
-                    for (int i=0; i<this->pendingRuntimeIdentification.size(); ++i){
-                        if (this->lost_count[this->pendingRuntimeIdentification[i]] > 0){
-                            anyLost = true;
-                            break;
-                        }
-                    }
-                    if (anyLost)
-                        this->m_runtimeIdentificationTimer -= 10; // delay the timer if there are lost robot (otherwise as soon it has been found it starts)
-                    else
-                        runRTI = true;
-                }
-                if (runRTI) runtimeIdentify();
-            }
-            break;
-        }
-        case IDENTIFY:{
-            this->identifyKilobots();
-            break;
-        }
-        default:{
-            this->trackKilobots();
-            break;
-        }
+	            /** determine if executing the runtime-identification (RTI) */
+	            if (this->m_runtimeIDenabled){
+	                bool runRTI = false;
+	                if (this->m_ongoingRuntimeIdentification){ // if already running, keep running
+	                    runRTI = true;
+	                } else if (!this->pendingRuntimeIdentification.empty() && this->m_runtimeIdentificationTimer++ > 50){ // if there are pending request for more than 5s
+	                    // I check that all pending request are not lost robots
+	                    bool anyLost = false;
+	                    for (int i=0; i<this->pendingRuntimeIdentification.size(); ++i){
+	                        if (this->lost_count[this->pendingRuntimeIdentification[i]] > 0){
+	                            anyLost = true;
+	                            break;
+	                        }
+	                    }
+	                    if (anyLost)
+	                        this->m_runtimeIdentificationTimer -= 10; // delay the timer if there are lost robot (otherwise as soon it has been found it starts)
+	                    else
+	                        runRTI = true;
+	                }
+	                if (runRTI) runtimeIdentify();
+	            }
+	            break;
+	        }
+	        case IDENTIFY:{
+	            this->identifyKilobots();
+	            break;
+	        }
+	        default:{
+	            this->trackKilobots();
+	            break;
+	        }
         }
 
         ++time;
@@ -559,12 +466,13 @@ void KilobotTracker::LOOPiterate()
             emit errorMessage(QString("FPS = ") + QString::number(5.0f/(c_time-last_time)));
             last_time = c_time;
         }
-
     }
-
 }
+    
 
-void KilobotTracker::runtimeIdentify(){
+
+
+void kilobottracker_singlecamera::runtimeIdentify(){
     //qDebug() << "Runtime-ID: " << this->m_runtimeIdentificationTimer;
     if (!this->m_ongoingRuntimeIdentification) {
         qDebug() << "Runtime-ID: started for robots" << this->pendingRuntimeIdentification;
@@ -699,20 +607,20 @@ void KilobotTracker::runtimeIdentify(){
     //this->showMat(display);
 }
 
-void KilobotTracker::updateKilobotStates()
+void kilobottracker_singlecamera::updateKilobotStates()
 {
     for (int i = 0; i < kilos.size(); ++i) {
         kilos[i]->updateExperiment();
         kilos[i]->updateHardware();
     }
 }
-void KilobotTracker::getInitialKilobotStates()
+void kilobottracker_singlecamera::getInitialKilobotStates()
 {
     for (int i = 0; i < kilos.size(); ++i) {
         kilos[i]->updateExperiment();
     }
 }
-void KilobotTracker::SETUPfindKilobots()
+void kilobottracker_singlecamera::SETUPfindKilobots()
 {
 
     if (this->finalImageB.empty()) return;
@@ -747,7 +655,12 @@ void KilobotTracker::SETUPfindKilobots()
         //circle( result, center, 3, Scalar(0,255,0), -1, 8, 0 );
         // draw the circle outline
         circle( display, center, radius, Scalar(0,0,255), 3, 8, 0 );
-        putText(display, this->showIDs?to_string(i):"", center, FONT_HERSHEY_PLAIN, 2.7, Scalar(0,0,255), 3);
+        stringstream ss;
+                ss << i;
+                string s=ss.str();
+
+                putText(display, this->showIDs?s:"", center, FONT_HERSHEY_PLAIN, 2.7, Scalar(0,0,255), 3);
+                //putText(display, this->showIDs?to_string(i):"", center, FONT_HERSHEY_PLAIN, 2.7, Scalar(0,0,255), 3);
     }
 
     cv::resize(display,display,Size(this->smallImageSize.x()*2, this->smallImageSize.y()*2));
@@ -776,11 +689,16 @@ void KilobotTracker::SETUPfindKilobots()
 
     this->kiloHeadings.clear();
     this->kiloHeadings.resize(this->kilos.size());
-    emit errorMessage(QString::fromStdString(to_string(kilos.size()))+ QString(" kilobots found!"));
+    stringstream ss;
+    ss << kilos.size();
+    string s=ss.str();
+
+    //emit errorMessage(QString::fromStdString(to_string(kilos.size()))+ QString(" kilobots found!"));
+    emit errorMessage(QString::fromStdString(s)+ QString(" kilobots found!"));
     emit activateExpButtons(!this->kilos.empty());
 }
 
-void KilobotTracker::identifyKilobots()
+void kilobottracker_singlecamera::identifyKilobots()
 {
 
     if (this->kilos.isEmpty()){
@@ -882,7 +800,7 @@ void KilobotTracker::identifyKilobots()
     this->showMat(display);
 }
 
-void KilobotTracker::identifyKilobot(int id, bool runtime = false){
+void kilobottracker_singlecamera::identifyKilobot(int id, bool runtime = false){
     // decompose id
     QVector < uint8_t > data(9);
     data[0] = id >> 8;
@@ -898,7 +816,7 @@ void KilobotTracker::identifyKilobot(int id, bool runtime = false){
     emit this->broadcastMessage(msg);
 }
 
-void KilobotTracker::identifyKilobot(int id)
+void kilobottracker_singlecamera::identifyKilobot(int id)
 {
     // decompose id
     QVector < uint8_t > data(9);
@@ -934,7 +852,7 @@ QString type2str(int type) {
 
     return r;
 }
-void KilobotTracker::trackKilobots()
+void kilobottracker_singlecamera::trackKilobots()
 {
 
     // convert for display
@@ -1423,28 +1341,31 @@ void KilobotTracker::trackKilobots()
                 // track light
                 if (this->t_type & LED || this->t_type & ADAPTIVE_LED) {
 
+                    for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[c](bb);
+
+                    /*
                     // switch cam/vid source depending on position...
                     if (bb.x < 2000/2 && bb.y < 2000/2) {
                         Rect bb_adj = bb;
                         bb_adj.x = bb_adj.x +100;
                         bb_adj.y = bb_adj.y +100;
-                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[clData.inds[0]][c](bb_adj);
+                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[c](bb_adj);
                     } else if (bb.x > 2000/2-1 && bb.y < 2000/2) {
                         Rect bb_adj = bb;
                         bb_adj.x = bb_adj.x -900;
                         bb_adj.y = bb_adj.y +100;
-                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[clData.inds[1]][c](bb_adj);
+                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[c](bb_adj);
                     } else if (bb.x < 2000/2 && bb.y > 2000/2-1) {
                         Rect bb_adj = bb;
                         bb_adj.x = bb_adj.x +100;
                         bb_adj.y = bb_adj.y -900;
-                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[clData.inds[2]][c](bb_adj);
+                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[c](bb_adj);
                     } else if (bb.x > 2000/2-1 && bb.y > 2000/2-1) {
                         Rect bb_adj = bb;
                         bb_adj.x = bb_adj.x -900;
                         bb_adj.y = bb_adj.y -900;
-                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[clData.inds[3]][c](bb_adj);
-                    }
+                        for (uint c = 0; c < 3; ++c) temp[c] = this->fullImages[c](bb_adj);
+                    }*/
 
                     if (this->t_type & ADAPTIVE_LED) {
                         light = this->getKiloBotLightAdaptive(temp, Point(bb.width/2,bb.height/2),i);
@@ -1666,7 +1587,7 @@ void KilobotTracker::trackKilobots()
     this->showMat(display);
 
 }
-void KilobotTracker::drawOverlay(Mat & display)
+void kilobottracker_singlecamera::drawOverlay(Mat & display)
 {
     QVector < drawnCircle > alphaCircles;
     for (int i = 0; i < this->circsToDraw.size(); ++i) {
@@ -1737,7 +1658,7 @@ void KilobotTracker::drawOverlay(Mat & display)
     }
 }
 
-Rect KilobotTracker::getKiloBotBoundingBox(int i, float scale)
+Rect kilobottracker_singlecamera::getKiloBotBoundingBox(int i, float scale)
 {
 
     float maxDist = scale*this->kbMaxSize;
@@ -1759,7 +1680,7 @@ Rect KilobotTracker::getKiloBotBoundingBox(int i, float scale)
 
 // Color detection V1: green detection works only at low intensity of the ambiant light
 #ifdef COLDET_V1
-void KilobotTracker::getKiloBotLights(Mat &display) {
+void kilobottracker_singlecamera::getKiloBotLights(Mat &display) {
     // use CUDA to find the kilobot lights...
 
     // set up three streams to try to get concurrent kernels
@@ -2107,7 +2028,7 @@ void KilobotTracker::getKiloBotLights(Mat &display) {
 
 // Color detection V2: green detection works for both high and low intensity of the ambiant light but the frame rate is slightly lower than V1
 #ifdef COLDET_V2
-void KilobotTracker::getKiloBotLights(Mat &display) {
+void kilobottracker_singlecamera::getKiloBotLights(Mat &display) {
     // use CUDA to find the kilobot lights...
 
     // set up three streams to try to get concurrent kernels
@@ -2482,9 +2403,9 @@ void KilobotTracker::getKiloBotLights(Mat &display) {
 
 
 #ifdef USE_CUDA
-kiloLight KilobotTracker::getKiloBotLight(cuda::GpuMat channelsG[3], Point centreOfBox, int index)
+kiloLight kilobottracker_singlecamera::getKiloBotLight(cuda::GpuMat channelsG[3], Point centreOfBox, int index)
 #else
-kiloLight KilobotTracker::getKiloBotLight(Mat channels[3], Point centreOfBox, int index)
+kiloLight kilobottracker_singlecamera::getKiloBotLight(Mat channels[3], Point centreOfBox, int index)
 #endif
 {
     // find the location and colour of the light...
@@ -2527,9 +2448,9 @@ kiloLight KilobotTracker::getKiloBotLight(Mat channels[3], Point centreOfBox, in
 }
 
 #ifdef USE_CUDA
-kiloLight KilobotTracker::getKiloBotLightAdaptive(cuda::GpuMat channels[3], Point centreOfBox, int index)
+kiloLight kilobottracker_singlecamera::getKiloBotLightAdaptive(cuda::GpuMat channels[3], Point centreOfBox, int index)
 #else
-kiloLight KilobotTracker::getKiloBotLightAdaptive(Mat channels[3], Point centreOfBox, int index)
+kiloLight kilobottracker_singlecamera::getKiloBotLightAdaptive(Mat channels[3], Point centreOfBox, int index)
 #endif
 {
     // find the location and colour of the light...
@@ -2594,174 +2515,64 @@ kiloLight KilobotTracker::getKiloBotLightAdaptive(Mat channels[3], Point centreO
 
 }
 
-void KilobotTracker::SETUPloadCalibration()
+void kilobottracker_singlecamera::SETUPloadCalibration()
 {
+
+
     if( (this->srcType==VIDEO) && (this->videoPath.isEmpty()))
         emit errorMessage("No video file selected!");
     else
     {
-    // Load the calibration data
 
-    // nicety - load last used directory
-    QSettings settings;
-    QString lastDir = settings.value("lastDirOut", QDir::homePath()).toString();
-    QString fileName = QFileDialog::getOpenFileName((QWidget *) sender(), tr("Load Calibration"), lastDir, tr("Calib files (*.xml *.yaml);; All files (*)"));
+        // load first images
 
-    if (fileName.isEmpty()) {
-        emit errorMessage("No file selected");
-        return;
+        // launch threads
+        this->THREADSlaunch();
+
+        this->time = 0;
+
+        // run stitcher once
+        this->loadFirstIm = true;
+        this->LOOPiterate();
+        this->loadFirstIm = false;
+
+        this->THREADSstop();
+
+        this->time = 0;
+
+        this->haveCalibration = true;
     }
-
-    // load the data
-    FileStorage fs(fileName.toStdString(),FileStorage::READ);
-
-    fs["corner1"] >> this->arenaCorners[0];
-    fs["corner2"] >> this->arenaCorners[1];
-    fs["corner3"] >> this->arenaCorners[2];
-    fs["corner4"] >> this->arenaCorners[3];
-
-    fs["R"] >> this->Rs;
-    fs["K"] >> this->Ks;
-
-    // need more sanity checks than this...
-    if (Rs.size() != 4 || Ks.size() != 4) {
-        emit errorMessage("Invalid calibration data");
-        this->haveCalibration = false;
-        return;
-    }
-
-    for (uint i = 0; i < Rs.size(); ++i) {
-        Mat R;
-        Rs[i].convertTo(R, CV_32F);
-        Rs[i] = R;
-    }
-    for (uint i = 0; i < Ks.size(); ++i) {
-        Mat K;
-        Ks[i].convertTo(K, CV_32F);
-        Ks[i] = K;
-    }
-
-    QDir lastDirectory (fileName);
-    lastDirectory.cdUp();
-    settings.setValue ("lastDirOut", lastDirectory.absolutePath());
-
-    this->SETUPstitcher();
-
-    // load first images
-
-    // launch threads
-    this->THREADSlaunch();
-
-    if (!this->compensator) {
-        // calculate to compensate for exposure
-        compensator = detail::ExposureCompensator::createDefault(detail::ExposureCompensator::GAIN);
-    }
-
-    if (!this->blender) {
-        // blend the images
-        blender = detail::Blender::createDefault(detail::Blender::FEATHER, true);
-    }
-
-    this->warpedImages.resize(4);
-    this->warpedMasks.resize(4);
-    this->corners.resize(4);
-    this->sizes.resize(4);
-
-    this->time = 0;
-
-    // run stitcher once
-    this->loadFirstIm = true;
-    this->LOOPiterate();
-    this->loadFirstIm = false;
-
-    this->THREADSstop();
-
-    this->time = 0;
-
-    this->haveCalibration = true;
-}
 }
 
-void KilobotTracker::SETUPstitcher()
+void kilobottracker_singlecamera::THREADSlaunch()
 {
 
-    // initial config
-    Ptr<WarperCreator> warper_creator;
-    warper_creator = new cv::PlaneWarper();//makePtr<cv::PlaneWarper>();
-    Ptr<detail::RotationWarper> warper = warper_creator->create(2000.0f);
-
-    Mat in(IM_HEIGHT, IM_WIDTH, CV_8UC3, Scalar(0,0,0));
-    Mat out;
-
-    corners.resize(4);
-    sizes.resize(4);
-
-    for (uint i = 0; i < 4; ++i) {
-        this->corners[i] = warper->warp(in, Ks[i], Rs[i], INTER_LINEAR, BORDER_REFLECT, out);
-        //this->corners[i].x = max(-1535, this->corners[i].x); //TEMP
-        this->sizes[i] = out.size();
+    if (srcStop.available()) srcStop.acquire();
+    if (!this->threads) {
+        this->threads = new acquireThread;
     }
 
 
-    int min_x = INT_MAX;
-    int min_y = INT_MAX;
-    int max_x = -INT_MAX;
-    int max_y = -INT_MAX;
-
-    for (int j = 0; j < 4; ++j) {
-        if (corners[j].x < min_x) min_x = corners[j].x;
-        if (corners[j].y < min_y) min_y = corners[j].y;
-        if (corners[j].x + sizes[j].width > max_x) max_x = corners[j].x + sizes[j].width;
-        if (corners[j].y + sizes[j].height > max_y) max_y = corners[j].y + sizes[j].height;
-    }
-
-    fullCorner =  Point(min_x, min_y);
-    fullSize =  Size(max_x-min_x+1, max_y-min_y+1);
-
-    // assign indices...
-    for (int j = 0; j < 4; ++j) {
-        if (corners[j].x - fullCorner.x < fullSize.width/5 && corners[j].y - fullCorner.y < fullSize.height/5) {
-            clData.inds[0] = j;
-        } else if (corners[j].x - fullCorner.x > fullSize.width/5 && corners[j].y - fullCorner.y < fullSize.height/5) {
-            clData.inds[1] = j;
-        } else if (corners[j].x - fullCorner.x < fullSize.width/5 && corners[j].y - fullCorner.y > fullSize.height/5) {
-            clData.inds[2] = j;
-        } else if (corners[j].x - fullCorner.x > fullSize.width/5 && corners[j].y - fullCorner.y > fullSize.height/5) {
-            clData.inds[3] = j;
-        }
-    }
-
+    //this->threads->arenaCorners[0] = this->arenaCorners[0];
+    //this->threads->arenaCorners[1] = this->arenaCorners[1];
+    //this->threads->arenaCorners[2] = this->arenaCorners[2];
+    //this->threads->arenaCorners[3] = this->arenaCorners[3];
+    //this->threads->corner = this->corners;
+    //this->threads->size = this->sizes;
+    //this->threads->fullCorner = fullCorner;
+    //this->threads->fullSize = fullSize;
+    //this->threads->R = this->Rs[0];
+    //this->threads->K = this->Ks[0];
+    this->threads->keepRunning = true;
+    this->threads->index = 0;
+    this->threads->type = this->srcType;
+    this->threads->videoDir = this->videoPath;
+    this->threads->height_x_adj = this->height_x_adj;
+    this->threads->height_y_adj = this->height_y_adj;
+    this->threads->start();
 }
 
-void KilobotTracker::THREADSlaunch()
-{
-    for (uint i = 0; i < 4; ++i)
-    {
-        if (srcStop[i].available()) srcStop[i].acquire();
-        if (!this->threads[i]) {
-            this->threads[i] = new acquireThread;
-        }
-        this->threads[i]->arenaCorners[0] = this->arenaCorners[0];
-        this->threads[i]->arenaCorners[1] = this->arenaCorners[1];
-        this->threads[i]->arenaCorners[2] = this->arenaCorners[2];
-        this->threads[i]->arenaCorners[3] = this->arenaCorners[3];
-        this->threads[i]->corner = this->corners[i];
-        this->threads[i]->size = this->sizes[i];
-        this->threads[i]->fullCorner = fullCorner;
-        this->threads[i]->fullSize = fullSize;
-        this->threads[i]->R = this->Rs[i];
-        this->threads[i]->K = this->Ks[i];
-        this->threads[i]->keepRunning = true;
-        this->threads[i]->index = i;
-        this->threads[i]->type = this->srcType;
-        this->threads[i]->videoDir = this->videoPath;
-        this->threads[i]->height_x_adj = this->height_x_adj;
-        this->threads[i]->height_y_adj = this->height_y_adj;
-        this->threads[i]->start();
-    }
-}
-
-void KilobotTracker::THREADSstop()
+void kilobottracker_singlecamera::THREADSstop()
 {
 
     // stop the timer
@@ -2770,27 +2581,22 @@ void KilobotTracker::THREADSstop()
     }
 
     // close threads
-    srcStop[0].release();
-    srcStop[1].release();
-    srcStop[2].release();
-    srcStop[3].release();
+    srcStop.release();
 
     // reset semaphores
-    for (uint i = 0; i < 4; i++) {
-        this->threads[i]->wait();
-        while (srcFree[i].available()) {
-            srcFree[i].acquire();
-        }
-        while (srcUsed[i].available()) {
-            srcUsed[i].acquire();
-        }
-        srcFree[i].release(BUFF_SIZE);
-    }
 
+    this->threads->wait();
+    while (srcFree.available()) {
+        srcFree.acquire();
+    }
+    while (srcUsed.available()) {
+        srcUsed.acquire();
+    }
+    srcFree.release(BUFF_SIZE);
 
 }
 
-void KilobotTracker::showMat(Mat &display)
+void kilobottracker_singlecamera::showMat(Mat &display)
 {
     // display
     cv::resize(display,display,Size(this->smallImageSize.x()*2, this->smallImageSize.y()*2));
@@ -2808,43 +2614,8 @@ void KilobotTracker::showMat(Mat &display)
     emit setStitchedImage(pix);
 }
 
-void KilobotTracker::SETUPsetCamOrder()
-{
 
-    int temp[4];
-    // check we have numbers zero to three
-    bool haveIndex[4] = {false,false,false,false};
-
-    QLineEdit * src = qobject_cast < QLineEdit * > (this->sender());
-    if (src) {
-        QString str = src->text();
-        QStringList list = str.split(",");
-        if (list.size() == 4)
-        {
-            for (int i = 0; i < list.size(); ++i) {
-                temp[i] = list[i].toInt();
-                if (temp[i] < 4 && temp[i] > -1) {
-                    haveIndex[temp[i]] = true;
-                }
-            }
-        }
-        if (haveIndex[0] && haveIndex[1] && haveIndex[2] && haveIndex[3])
-        {
-            for (int i = 0; i < 4; ++i)
-            {
-                camOrder[i] = temp[i];
-                /*if (this->threads[i]) {
-                    this->threads[i]->index =
-                }*/
-            }
-            qDebug() << "Cam order set";
-        }
-
-    }
-
-}
-
-void KilobotTracker::RefreshDisplayedImage()
+void kilobottracker_singlecamera::RefreshDisplayedImage()
 {
     if(this->haveCalibration){
         // launch threads
@@ -2867,7 +2638,7 @@ void KilobotTracker::RefreshDisplayedImage()
 }
 
 /* method to move the position of kilobot (with known ID) to specific position inicated by the user through a mouse click */
-void KilobotTracker::manuallyassignID(QPoint position){
+void kilobottracker_singlecamera::manuallyassignID(QPoint position){
 
     if(m_assignIDmanually){
         position *= 2000.0/600.0;

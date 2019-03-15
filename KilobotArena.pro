@@ -19,7 +19,6 @@ SOURCES += main.cpp\
         mainwindow.cpp \
     clicksignalqlabel.cpp \
     dragzoomqlabel.cpp \
-    kilobottracker.cpp \
     kilobot.cpp \
     kilobotoverheadcontroller.cpp \
     ohc/calibrate.cpp \
@@ -28,12 +27,12 @@ SOURCES += main.cpp\
     ohc/serialwin.cpp \
     kilobotidassignment.cpp \
     kilobotcalibrate.cpp \
-    kilobotcalibrateenv.cpp
+    kilobotcalibrateenv.cpp \
+    kilobottracker_singlecamera.cpp
 
 HEADERS  += mainwindow.h \
     clicksignalqlabel.h \
     dragzoomqlabel.h \
-    kilobottracker.h \
     kilobot.h \
     kilobotoverheadcontroller.h \
     ohc/calibrate.h \
@@ -46,7 +45,8 @@ HEADERS  += mainwindow.h \
     userthread.h \
     kilobotidassignment.h \
     kilobotcalibrate.h \
-    kilobotcalibrateenv.h
+    kilobotcalibrateenv.h \
+    kilobottracker_singlecamera.h
 
 FORMS    += mainwindow.ui
 
@@ -71,26 +71,20 @@ DEFINES += USE_OPENCV3
 #LIBS += -L/opt/local/lib \
 INCLUDEPATH += /usr/local/include/
 LIBS += -L/usr/local/lib/ \
-        -lopencv_ocl \
         -lopencv_core \
         -lopencv_imgproc \
         -lopencv_features2d\
         -lopencv_highgui\
-        -lopencv_contrib\
         -lopencv_calib3d\
         -lopencv_objdetect\
         -lopencv_photo\
         -lopencv_stitching\
         -lopencv_flann\
-        -lopencv_gpu \
-        -lopencv_legacy \
         -lopencv_ml \
         -lopencv_objdetect  \
-        -lopencv_ocl \
         -lopencv_photo \
         -lopencv_stitching \
         -lopencv_superres \
-        -lopencv_ts \
         -lopencv_video \
         -lopencv_videostab \
         -lopencv_videoio \

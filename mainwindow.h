@@ -30,7 +30,7 @@ using namespace cv;
 #include <QMainWindow>
 
 // Project includes
-#include "kilobottracker.h"
+#include "kilobottracker_singlecamera.h"
 #include "kilobotoverheadcontroller.h"
 //#include "kilobotexperiment.h"
 
@@ -85,7 +85,7 @@ public slots:
 private:
     Ui::MainWindow *ui;
 
-    KilobotTracker kbtracker;
+    kilobottracker_singlecamera kbtracker;
     KilobotOverheadController ohc;
     UserThread * thread = NULL;
 

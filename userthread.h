@@ -12,7 +12,7 @@
 #include "kilobotidassignment.h"
 #include "kilobotcalibrate.h"
 
-#include "kilobottracker.h"
+#include "kilobottracker_singlecamera.h"
 #include "kilobotoverheadcontroller.h"
 #include <QDebug>
 
@@ -21,7 +21,7 @@ class UserThread : public QThread
 {
     Q_OBJECT
 public:
-    explicit UserThread(KilobotTracker * kbtracker, KilobotOverheadController * ohc, QObject *parent = 0)
+    explicit UserThread(kilobottracker_singlecamera * kbtracker, KilobotOverheadController * ohc, QObject *parent = 0)
     {
 
         Q_UNUSED(parent)
@@ -44,7 +44,7 @@ signals:
 
 private:
     KilobotOverheadController * ohc;
-    KilobotTracker * kbtracker;
+    kilobottracker_singlecamera * kbtracker;
 
     QString currExptFilename;
 
