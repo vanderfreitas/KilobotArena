@@ -128,3 +128,14 @@ sudo make install
 sudo ldconfig
 
 ```
+
+
+# Practical comments
+
+1) Make sure you have not used the kilogui before starting the KilobotArena, because it affects the OHC communication with the KilobotArena. In case you have used the kilogui, reboot the computer.
+
+2) Change the camera dimensions in the kilobottracker_singlecamera.cpp, the defines IMG_WIDTH and IMG_HEIGHT, according to your camera configuration.
+
+3) In the file kilobottracker_singlecamera.cpp, line 150, change the Rectangle accordingly in order to have the image adjusted to your arena. In case your camera is already focusing only the arena, comment the line:  image = image(Rect(370,70,1400,1400));
+
+

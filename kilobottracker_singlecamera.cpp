@@ -21,8 +21,11 @@
 #define COLDET_V1
 
 
-#define IMG_WIDTH 640
-#define IMG_HEIGHT 480
+//#define IMG_WIDTH 640
+//#define IMG_HEIGHT 480
+
+#define IMG_WIDTH 2064
+#define IMG_HEIGHT 1544
 
 QSemaphore srcFree;
 QSemaphore srcUsed;
@@ -140,11 +143,11 @@ private:
                         camUsage.acquire();
                         cap.retrieve(image);
 
-                        //This rect must be changed whenever the camera changes position.
+                        //This rectangle depends on camera position.
                         //This captures exactly the center of the scene, in order to have only the arena region.
                         //The output image has dimensions 1400 x 1400 pixels.
 
-                        //image = image(Rect(370,70,1400,1400));
+                        image = image(Rect(370,70,1400,1400));
 
                         // One has to check whether it is necessary for the image to have Size 2000 x 2000 pixels.
                         // We kept only because the original ARK code prescribes this size.
